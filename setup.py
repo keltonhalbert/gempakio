@@ -40,6 +40,7 @@ EXTRAS = {
 if __name__ == '__main__':
     setup(install_requires=REQUIRES,
           packages=PACKAGES,
+          package_data={'gempakio': ['snstns.tbl']},
           zip_safe=True,
           name=NAME,
           version=VERSION,

@@ -15,11 +15,13 @@ import logging
 import math
 from pathlib import Path
 import struct
-import sys
+import sys, os
+import pkg_resources 
 
 import numpy as np
 import pyproj
 import xarray as xr
+import pandas as pd
 
 from .gemcalc import (interp_logp_height, interp_logp_pressure, interp_missing_data,
                       interp_moist_height)
@@ -1034,6 +1036,10 @@ class GempakSounding(GempakFile):
         """Instantiate GempakSounding object from file."""
         super().__init__(file)
 
+        stations_file = pkg_resources.resource_stream(__name__, 'snstns.tbl')
+        table_names = ["Site ID", "WMO ID", "Site Name", "State", "Country", "Latitude", "Longitude", "Elevation", "Flag"]
+        self.stations = pd.read_fwf(stations_file, comment="!", names=table_names, dtype=str)
+
         # Row Headers
         self._buffer.jump_to(self._start, _word_to_position(self.prod_desc.row_headers_ptr))
         self.row_headers = []
@@ -1098,6 +1104,19 @@ class GempakSounding(GempakFile):
         """Return sounding information."""
         return self._sninfo
 
+    def _correct_missing_station_info(self, sounding):
+        """
+        If station elevation is missing, read from the local
+        table and update the values
+        """
+        stn_info = self.stations[self.stations['WMO ID'] ==  str(sounding['STNM']).zfill(5)]
+        sounding['SELV'] = float(stn_info['Elevation'])
+        sounding['SLON'] = float(stn_info['Longitude']) / 100.0
+        sounding['SLAT'] = float(stn_info['Latitude']) / 100.0
+        sounding['COUN'] = str(stn_info['Country'].values[0])
+        sounding['STAT'] = str(stn_info['State'].values[0])
+        return sounding
+
     def _unpack_merged(self, sndno):
         """Unpack merged sounding data."""
         soundings = []
@@ -1115,6 +1134,10 @@ class GempakSounding(GempakFile):
                             'DATE': row_head.DATE,
                             'TIME': row_head.TIME,
                             }
+                ## update station info here if necessary
+                if sounding['SELV'] == -9999.0:
+                    sounding = self._correct_missing_station_info(sounding)
+
                 for iprt, part in enumerate(self.parts):
                     pointer = (self.prod_desc.data_block_ptr
                                + (irow * self.prod_desc.columns * self.prod_desc.parts)
@@ -1164,78 +1187,6 @@ class GempakSounding(GempakFile):
                 soundings.append(sounding)
         return soundings
 
-    def _unpack_unmerged_nomerge(self, sndno):
-        """Unpack unmerged sounding data."""
-        soundings = []
-        for irow, row_head in enumerate(self.row_headers):
-            for icol, col_head in enumerate(self.column_headers):
-                if (irow, icol) not in sndno:
-                    continue
-                sounding = {'STID': col_head.STID,
-                            'STNM': col_head.STNM,
-                            'SLAT': col_head.SLAT,
-                            'SLON': col_head.SLON,
-                            'SELV': col_head.SELV,
-                            'STAT': col_head.STAT,
-                            'COUN': col_head.COUN,
-                            'DATE': row_head.DATE,
-                            'TIME': row_head.TIME,
-                            }
-                for iprt, part in enumerate(self.parts):
-                    pointer = (self.prod_desc.data_block_ptr
-                               + (irow * self.prod_desc.columns * self.prod_desc.parts)
-                               + (icol * self.prod_desc.parts + iprt))
-                    self._buffer.jump_to(self._start, _word_to_position(pointer))
-                    self.data_ptr = self._buffer.read_int(4, self.endian, False)
-                    if not self.data_ptr:
-                        continue
-                    self._buffer.jump_to(self._start, _word_to_position(self.data_ptr))
-                    self.data_header_length = self._buffer.read_int(4, self.endian, False)
-                    data_header = self._buffer.set_mark()
-                    self._buffer.jump_to(data_header,
-                                         _word_to_position(part.header_length + 1))
-                    lendat = self.data_header_length - part.header_length
-
-                    fmt_code = {
-                        DataTypes.real: 'f',
-                        DataTypes.realpack: 'i',
-                        DataTypes.character: 's',
-                    }.get(part.data_type)
-
-                    if fmt_code is None:
-                        raise NotImplementedError('No methods for data type {}'
-                                                  .format(part.data_type))
-                    if fmt_code == 's':
-                        lendat *= BYTES_PER_WORD
-
-                    packed_buffer = (
-                        self._buffer.read_struct(
-                            struct.Struct(f'{self.prefmt}{lendat}{fmt_code}')
-                        )
-                    )
-
-                    parameters = self.parameters[iprt]
-                    nparms = len(parameters['name'])
-                    sounding[part.name] = {}
-
-                    if part.data_type == DataTypes.realpack:
-                        unpacked = self._unpack_real(packed_buffer, parameters, lendat)
-                        for iprm, param in enumerate(parameters['name']):
-                            sounding[part.name][param] = unpacked[iprm::nparms]
-                    elif part.data_type == DataTypes.character:
-                        for iprm, param in enumerate(parameters['name']):
-                            sounding[part.name][param] = (
-                                self._decode_strip(packed_buffer[iprm])
-                            )
-                    else:
-                        for iprm, param in enumerate(parameters['name']):
-                            sounding[part.name][param] = (
-                                np.array(packed_buffer[iprm::nparms], dtype=np.float32)
-                            )
-
-                soundings.append(sounding)
-        return soundings
-
     def _unpack_unmerged(self, sndno):
         """Unpack unmerged sounding data."""
         soundings = []
@@ -1253,6 +1204,10 @@ class GempakSounding(GempakFile):
                             'DATE': row_head.DATE,
                             'TIME': row_head.TIME,
                             }
+                ## update station info here if necessary
+                if sounding['SELV'] == -9999.0:
+                    sounding = self._correct_missing_station_info(sounding)
+
                 for iprt, part in enumerate(self.parts):
                     pointer = (self.prod_desc.data_block_ptr
                                + (irow * self.prod_desc.columns * self.prod_desc.parts)
