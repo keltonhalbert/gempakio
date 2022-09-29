@@ -1039,6 +1039,7 @@ class GempakSounding(GempakFile):
         stations_file = pkg_resources.resource_stream(__name__, 'snstns.tbl')
         table_names = ["Site ID", "WMO ID", "Site Name", "State", "Country", "Latitude", "Longitude", "Elevation", "Flag"]
         self.stations = pd.read_fwf(stations_file, comment="!", names=table_names, dtype=str)
+        print(self.stations)
 
         # Row Headers
         self._buffer.jump_to(self._start, _word_to_position(self.prod_desc.row_headers_ptr))
@@ -1110,11 +1111,14 @@ class GempakSounding(GempakFile):
         table and update the values
         """
         stn_info = self.stations[self.stations['WMO ID'] ==  str(sounding['STNM']).zfill(5)]
-        sounding['SELV'] = float(stn_info['Elevation'])
-        sounding['SLON'] = float(stn_info['Longitude']) / 100.0
-        sounding['SLAT'] = float(stn_info['Latitude']) / 100.0
-        sounding['COUN'] = str(stn_info['Country'].values[0])
-        sounding['STAT'] = str(stn_info['State'].values[0])
+        try:
+            sounding['SELV'] = float(stn_info['Elevation'])
+            sounding['SLON'] = float(stn_info['Longitude']) / 100.0
+            sounding['SLAT'] = float(stn_info['Latitude']) / 100.0
+            sounding['COUN'] = str(stn_info['Country'].values[0])
+            sounding['STAT'] = str(stn_info['State'].values[0])
+        except:
+            print('WARNING: Tried to fix missing station info, but station was not found: {stn}'.format(stn=sounding['STNM']))
         return sounding
 
     def _unpack_merged(self, sndno):
