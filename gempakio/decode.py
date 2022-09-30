@@ -1039,7 +1039,6 @@ class GempakSounding(GempakFile):
         stations_file = pkg_resources.resource_stream(__name__, 'snstns.tbl')
         table_names = ["Site ID", "WMO ID", "Site Name", "State", "Country", "Latitude", "Longitude", "Elevation", "Flag"]
         self.stations = pd.read_fwf(stations_file, comment="!", names=table_names, dtype=str)
-        print(self.stations)
 
         # Row Headers
         self._buffer.jump_to(self._start, _word_to_position(self.prod_desc.row_headers_ptr))
